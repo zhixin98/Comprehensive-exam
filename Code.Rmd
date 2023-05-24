@@ -1,0 +1,426 @@
+---
+title: "CE_code"
+author: "Zhixin Tang"
+date: "2023-05-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(gplots)
+library(cluster)
+library(MASS)
+library(knitr)
+library(tidyverse)
+library(lubridate)
+library(nycflights13)
+library(ggpubr)
+library(graphics)
+library(rpart)
+library(rpart.plot)
+library(stats)
+library(car)
+library(forecast)
+library(tsibble)
+library(mgcv)
+library(nlme)
+library(lubridate)
+library(forecast)
+library(plm)
+library(lme4)
+library(lmerTest)
+library(survival)
+library(season)
+```
+
+```{r}
+data <- read.csv("BEAM_Dashboard_-_Report_Data.csv")
+data <- data[,-c(8,9,10)]
+data$State <- as.factor(data$State)
+data$Pathogen <- as.factor(data$Pathogen)
+data$Source <- as.factor(data$Source)
+```
+
+```{r}
+data <- data[rowSums(is.na(data))==0,]
+```
+
+```{r}
+data %>% group_by(Pathogen) %>% summarise(total_number=sum(Number_of_isolates),mean=mean(Number_of_isolates),median=median(Number_of_isolates),max=max(Number_of_isolates),min=min(Number_of_isolates),range=max(Number_of_isolates)-min(Number_of_isolates))
+```
+
+```{r}
+nrow(data[which(data$Pathogen=="Campylobacter"),])
+```
+
+
+```{r}
+data %>% group_by(State) %>% summarise(total_number=sum(Number_of_isolates),mean=mean(Number_of_isolates),median=median(Number_of_isolates),max=max(Number_of_isolates),min=min(Number_of_isolates)) %>% arrange(desc(total_number)) %>% slice(1:5)
+```
+```{r}
+ggplot(data = data)+
+  geom_histogram(mapping = aes(x=Number_of_isolates),bins = 30)
+```
+The response variable is right-skewed. 
+
+```{r}
+ggplot(data = data)+
+  geom_boxplot(mapping=aes(x=Pathogen,y=Number_of_isolates))
+```
+
+```{r}
+ggplot(data = data)+
+  geom_bar(mapping = aes(x=Pathogen,color=Source,fill=Source))
+n1 <- data %>% group_by(State,Pathogen) %>% summarise(total_cases=sum(Number_of_isolates)) 
+ggplot(n1, aes(x = State, y = total_cases, fill = Pathogen)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "States", y = "Total Cases", fill = "Pathogens") +
+  theme(axis.text.x = element_text(size = 6))
+n2 <- data %>% group_by(State) %>% summarise(total_cases=sum(Number_of_isolates))
+n3 <- merge(dataset2,n2,by="State")
+n3$incident_rate <- n3$total_cases/n3$`POP(2020)`
+n3 %>% arrange(desc(incident_rate))
+```
+Most of the pathogens are found in Stool. 
+
+```{r}
+data$Time <- as.Date(paste0(data$Month,"/01/", data$Year),"%m/%d/%Y")
+options(warn = -1)
+data_new <- data %>% group_by(data$Time) %>% summarise(total_cases = sum(Number_of_isolates))
+names(data_new)[1] <- "Date"
+fig.spaghetti.1 <- data_new %>% 
+  ggplot(aes(x=Date,y=total_cases)) +
+  geom_line()+
+  ggtitle("total cases of isolates in each month")
+fig.spaghetti.1
+```
+the plot has significant pattern. 
+
+```{r}
+data_new2 <- data %>% group_by(data$Time,data$State) %>% summarise(total_cases = sum(Number_of_isolates))
+names(data_new2)[1] <- "Date"
+names(data_new2)[2] <- "State"
+fig.spaghetti.2 <- data_new2 %>% 
+  ggplot(aes(x=Date,y=total_cases,color=State)) +
+  geom_line()+
+  ggtitle("total cases of isolates in each month by States")
+fig.spaghetti.2
+data_new6 <- data %>% group_by(data$Time,data$Pathogen) %>% summarise(total_cases = sum(Number_of_isolates))
+names(data_new6)[1] <-"Date"
+names(data_new6)[2] <- "Pathogens"
+fig.spaghetti.4 <- data_new6 %>% 
+  ggplot(aes(x=Date,y=total_cases,color=Pathogens)) +
+  geom_line()+
+  ggtitle("total cases of isolates in each month by Pathogens")
+fig.spaghetti.4
+
+```
+```{r}
+table(data$State)
+```
+```{r}
+data %>% group_by(State) %>% summarise(total_number=sum(Number_of_isolates)) %>% arrange(total_number) %>% slice(1:10)
+```
+```{r}
+data_new4 <- data[data$Pathogen=="Salmonella",]
+```
+
+```{r}
+data_new4 %>% group_by(State) %>% summarise(total_number=sum(Number_of_isolates)) %>% arrange(total_number) 
+```
+```{r}
+table(data_new4$State)
+```
+```{r}
+y <- dataset2$BRI
+```
+
+```{r}
+data_new4$State <- as.factor(data_new4$State)
+```
+```{r}
+x <- NULL
+for(i in y){
+  m <- data_new4[data_new4$State==i,]
+  x <- rbind(x,m)
+}
+names(dataset2)[2] <- "State"
+dataset2 <- dataset2[,-1]
+dataset2$rural <- 100-dataset2$`Urban%`
+dataset2 <- dataset2[,-3]
+```
+```{r}
+x$Year <- as.factor(x$Year)
+x$Month <- as.factor(x$Month)
+j <- levels(x$Month)
+y <- NULL
+for(m in c("2018","2019","2020","2021","2022")){
+  for(n in j){
+    new <- x[x$Year==m,]
+    new_1 <- new[new$Month==n,]
+    new_2 <- new_1 %>% group_by(State) %>% summarise(Number_of_isolates = sum(Number_of_isolates))
+    new_3 <- cbind(Year=rep(m),Month=rep(n),new_2)
+    new_4 <- merge(new_3,dataset2,by="State")
+    y <- rbind(y,new_4)
+  }
+}
+z <- NULL
+for(m in "2023"){
+  for(n in c("1","2","3")){
+    new <- x[x$Year==m,]
+    new_1 <- new[new$Month==n,]
+    new_2 <- new_1 %>% group_by(State) %>% summarise(Number_of_isolates = sum(Number_of_isolates))
+    new_3 <- cbind(Year=rep(m),Month=rep(n),new_2)
+    new_4 <- merge(new_3,dataset2,by="State")
+    z <- rbind(z,new_4)
+  }
+}
+final.data <- rbind(y,z)
+```
+
+```{r}
+table(final.data$State)
+```
+```{r}
+x[x$State=="AK",]
+```
+
+```{r}
+names(final.data)[5] <- "population"
+names(final.data)
+model <- glm(Number_of_isolates~State+Year+Month+population+rural,data = final.data, family = poisson())
+```
+
+```{r}
+n <- nrow(final.data)
+model$deviance/(n-length(coef(model)))
+model2 <- glm.nb(Number_of_isolates~Year+Month+population+rural,data = final.data)
+model2$deviance/(n-length(coef(model2)))
+```
+
+
+```{r}
+a <- final.data[,c(1,4,5,6)]
+binary_matrix <- model.matrix(~ State - 1, data = a)
+distance_matrix <- dist(binary_matrix, method = "euclidean")
+hierarchical_clustering <- hclust(distance_matrix, method = "ward.D2")
+groups <- cutree(hierarchical_clustering, k = 4)
+```
+
+```{r}
+a$new_group <- factor(cut[a$State])
+```
+
+```{r}
+table(a$State,a$new_group)
+```
+
+```{r}
+final.data_new <- final.data
+if(final.data_new$State %in% c("WA","MT","OR","ID","WY","CA","NV","UT","AZ","CO","NM","AK","HI")){
+  final.data_new$State=="West"
+}elseif(final.data_new$State %in% c("ND","SD","NE","KS","MN","IA","MO","WI","IL","MI","IN","OH")){
+  final.data_new$State
+}
+```
+```{r}
+s <- which(final.data_new$State %in% c("OK","TX","AR","LA","MS","AL","TN","KY","FL","GA","SC","NC","WV","VA","DE","MD","DC"))
+final.data_new$State[s] <- "South"
+final.data_new$State <- as.factor(final.data_new$State)
+```
+
+```{r}
+final.data_new$Month <- as.factor(final.data_new$Month)
+list <- levels(final.data_new$Month)
+x <- NULL
+for(i in c("2018","2019","2020","2021","2022")){
+  for(j in list){
+    new <- final.data_new[final.data_new$Year==i,]
+    new1 <- new[new$Month==j,]
+    new2 <- new1 %>% group_by(State) %>% summarise(Number_of_isolates = sum(Number_of_isolates),population=sum(population),rural=mean(rural))
+    new3 <- cbind(Year=i,Month=j,new2)
+    x <- rbind(x,new3)
+  }
+}
+for(i in "2023"){
+  for(j in c("1","2","3")){
+    new <- final.data_new[final.data_new$Year==i,]
+    new1 <- new[new$Month==j,]
+    new2 <- new1 %>% group_by(State) %>% summarise(Number_of_isolates = sum(Number_of_isolates),population=sum(population),rural=mean(rural))
+    new3 <- cbind(Year=i,Month=j,new2)
+    x <- rbind(x,new3)
+  }
+}
+```
+```{r}
+x$Year <- as.factor(x$Year)
+x$Month <- as.factor(x$Month)
+x$State <- as.factor(x$State)
+x$Number_of_isolates <- as.numeric(x$Number_of_isolates)
+```
+
+
+```{r}
+model <- glm(Number_of_isolates~State+Year+Month+population+rural,data = x, family = poisson())
+n <- nrow(x)
+model$deviance/(n-length(coef(model)))
+```
+
+```{r}
+x$Month <- as.factor(x$Month)
+x$Year <- as.factor(x$Year)
+model2 <- glm.nb(Number_of_isolates~Year+Month+population+rural+State,data = x)
+model2$deviance/(n-length(coef(model2)))
+```
+
+```{r}
+
+summary(model2)
+```
+```{r}
+res.1 <- residuals(model2, type="pearson")
+plot(model2$fitted.values, res.1, pch=16, cex=0.6, ylab='Pearson Residuals', xlab='Fitted Values,spar=0.9')
+lines(smooth.spline(model2$fitted.values, res.1, spar=0.9), col=2)
+abline(h=0, lty=2, col='grey')
+runs.test(y = res.1, plot.it = TRUE)
+title(main='Pearson Residual Runs Test')
+```
+
+```{r}
+vif(model2)
+```
+
+```{r}
+x$Time <- as.Date(paste0(x$Month,"/01/", x$Year),"%m/%d/%Y")
+options(warn = -1)
+x_new <- x %>% group_by(x$Time) %>% summarise(total_cases = sum(Number_of_isolates))
+names(x_new)[1] <- "Date"
+fig.spaghetti.3 <- x_new %>% 
+  ggplot(aes(x=Date,y=total_cases)) +
+  geom_line()+
+  ggtitle("total cases of isolates in each month")
+fig.spaghetti.3
+```
+
+```{r}
+x_new2 <- x[,c(1,2,4)]
+x_new2 <- x_new2 %>% group_by(Year,Month) %>% summarise(total_case = sum(Number_of_isolates))
+x_new2$Month <- factor(x_new2$Month, levels = c("1","2","3","4","5","6","7","8","9","10","11","12"))
+time <- x_new2 %>% arrange(Year,Month)
+count_ts <- ts(time$total_case, start = c(min(time$Year), 1), end = c(max(time$Year), 12), frequency = 12)
+acf(count_ts,lag.max = 63)
+pacf(count_ts,lag.max = 63)
+```
+```{r}
+x_new
+```
+
+```{r}
+count_ts
+```
+```{r}
+x_new2 
+```
+
+```{r}
+x$Year <- as.numeric(x$Year)
+x$Month <- as.numeric(x$Month)
+mod_1 <- gam(Number_of_isolates~s(Year,bs="cs",k=4)+s(Month,bs="cs",k=6)+population+State+rural,data = x_new, family = poisson(), method = "GCV.Cp")
+mod <- gam(Number_of_isolates~s(Year,bs="cc",k=4)+s(Month,bs="cc",k=5)+population+State+rural,data = x_new, family = nb(), method = "GCV.Cp")
+std_residual <- resid(mod,type = "pearson")
+which(std_residual < -2)
+which(std_residual > 2)
+std_residual[c(105,122,124,162,251,17,70,73,74,78,98,151,238)]
+x_new <- x[-c(122,124,105,162,70),]
+n <- nrow(x)
+mod_1$deviance/(n-length(coef(mod_1)))
+
+n <- nrow(x)
+mod$deviance/(n-length(coef(mod)))
+```
+
+```{r}
+mod <- gam(Number_of_isolates~s(Year,bs="cc",k=4)+s(Month,bs="cc",k=5)+population+State+rural,data = x_new, family = nb(), method = "GCV.Cp")
+```
+
+
+```{r}
+summary(mod)
+AIC(mod)
+plot(mod,residuals=TRUE, shade=TRUE)
+summary(gam_model)
+AIC(gam_model)
+plot(gam_model, residuals=TRUE, shade=TRUE)
+```
+
+
+```{r}
+
+gam.check(mod)
+gam.check(gam_model)
+```
+
+```{r}
+gamm_model <- gamm(Number_of_isolates ~ s(Year, bs = "cr", k = 3) + s(Month, bs = "cr", k = 5) + population + State + rural,
+  data = x,
+  family = nb(),
+  correlation = corARMA(p = 1, q = 1),
+  method = "REML")
+```
+
+```{r}
+summary(gamm_model$gam)
+```
+```{r}
+plot(gamm_model$gam, residuals=TRUE, shade=TRUE)
+gam.check(gamm_model$gam)
+residuals <- residuals(gamm_model$gam)
+
+```
+
+```{r}
+x$Time <- as.Date(paste0(x$Year,"/",x$Month,"/01"),"%Y/%m/%d")
+res <- cosinor(Number_of_isolates~population+State+rural,date = 'Time', data = x_new, family = nb())
+summary(res)
+residuals <- residuals(res)
+fitted.values <- fitted(res)
+plot(fitted.values, residuals, main = "Residuals vs Fitted", xlab = "Fitted Values", ylab = "Residuals")
+qqnorm(residuals)
+qqline(residuals)
+res_1 = cosinor(Number_of_isolates~as.factor(Year)+population+State+rural,date = 'Month', data = x, family = nb(),type = "monthly")
+summary(res_1)
+```
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
